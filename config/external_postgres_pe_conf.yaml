@@ -18,4 +18,4 @@ roles:
   pe_agent:
     provisioners:
       - type: pe_agent
-        master: 'pe-mom'
+        master_vm: 'pe-mom'
