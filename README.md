@@ -3,37 +3,22 @@
 ## To Start the stack
 
 
-
-
 ```
-# Bring up MOM first - this will fail because the external postgres node isn't
-# yet configured, but we expect this failure.
 vagrant up pe-mom;
-# Next bring up the external-postgres node. This should succeed
 vagrant up external-postgres;
-# The MOM needs to know about the external-postgres node, so provision with the
-# hosts provisioner again to add it to /etc/hosts
 vagrant provision pe-mom --provision-with hosts;
-# This will perform the rest of the MOM configuration that failed during the
-# first step
 vagrant ssh pe-mom -c "sudo su - -c 'puppet enterprise configure; puppet agent -t;'"
-# This step MIGHT be unnecessary...
 vagrant ssh external-postgres -c "sudo su - -c 'puppet enterprise configure; puppet agent -t;'"
-# This step runs all provisioners on the MOM, including the one that will setup
-# the node groups in the console and pin the compile master node to the group.
 vagrant provision pe-mom
-# Now bring up the compile master node to get Puppet installed
 vagrant up compile-master-puppetdb
-# Run Puppet on the compile master node to get it configured
 vagrant ssh compile-master-puppetdb -c "sudo su - -c 'puppet agent -t;'"
-# Run Puppet on the MOM to add the compile master to all whitelists
 vagrant ssh pe-mom -c "sudo su - -c 'puppet agent -t;'"
 ```
 
 ## To Confirm you can run an agent against the compile master with PuppetDB
 
 ```
-vagrant ssh compile-master-puppetdb -c "sudo puppet agent -t --server compile-master-puppetdb --certname test"
+vagrant ssh compile-master-puppetdb -c "sudo /opt/puppetlabs/bin/puppet agent -t --server compile-master-puppetdb --certname test"
 
 ```
 
