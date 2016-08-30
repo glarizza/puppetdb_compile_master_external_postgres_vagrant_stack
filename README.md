@@ -10,7 +10,7 @@ vagrant up pe-mom;
 vagrant up external-postgres;
 vagrant provision pe-mom --provision-with hosts;
 vagrant ssh pe-mom -c "sudo su - -c 'puppet enterprise configure; puppet agent -t;'"
-vagrant ssh pe-postgres-node -c "sudo su - -c 'puppet enterprise configure; puppet agent -t;'"
+vagrant ssh external-postgres -c "sudo su - -c 'puppet enterprise configure; puppet agent -t;'"
 ```
 
 ## To Confirm you can run an agent against the compile master with PuppetDB
