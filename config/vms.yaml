@@ -4,8 +4,8 @@ vms:
     box:  "puppetlabs/centos-6.6-64-nocm"
     roles:
       - "compile_master_puppetdb_node_group"
-      - "customize_pe_via_hiera_2015"
       - "external_postgres_pe_conf"
+      - "customize_pe_via_hiera_2015"
       - "blank_resolve_conf"
       - "4-cpus"
       - "2gb-memory"

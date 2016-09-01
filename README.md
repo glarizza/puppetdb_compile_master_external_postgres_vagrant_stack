@@ -1,36 +1,238 @@
 # Testing external postgres with PuppetDB on compile masters
 
-## To Start the stack
-
+## TL;DR: Starting the stack (order matters)
 
 ```
 vagrant up pe-mom;
 vagrant up external-postgres;
 vagrant provision pe-mom --provision-with hosts;
 vagrant ssh pe-mom -c "sudo su - -c 'puppet enterprise configure; puppet agent -t;'"
-vagrant ssh external-postgres -c "sudo su - -c 'puppet enterprise configure; puppet agent -t;'"
 vagrant provision pe-mom
+vagrant ssh external-postgres -c "sudo su - -c 'puppet agent -t;'"
 vagrant up compile-master-puppetdb
-vagrant ssh compile-master-puppetdb -c "sudo su - -c 'puppet agent -t;'"
 vagrant ssh pe-mom -c "sudo su - -c 'puppet agent -t;'"
 ```
 
-## To Confirm you can run an agent against the compile master with PuppetDB
+## Nodes within the stack
+
+This Vagrant stack will stand up three machines with the following roles:
+
+* PE Master of Masters node (pe-mom) with...
+  * Puppet Enterprise Console
+  * PostgreSQL with the Console database
+  * Certificate Authority
+  * Puppetserver (master role)
+  * PuppetDB instance pointing back to the external PostgreSQL database
+* External PostgreSQL node (external-postgres) with...
+  * The PuppetDB Database
+* Compilation Master node (compile-master-puppetdb) with...
+  * Puppetserver (master role)
+  * PuppetDB instance pointing back to the external PostgreSQL database
+
+## Detailed instructions for starting the stack
+
+* `vagrant up pe-mom`
+  * This will bring up the Master of Masters (MOM) **BUT INSTALLATION WILL
+  FAIL** this is expected because the external postgres database isn't up yet.
+  When the MOM fails, though, it still has Puppetserver running with the CA
+  role, which is what we need to get the external postgres node registered with
+  Puppet and configured
+* `vagrant up external-postgres`
+  * This brings up the external postgres node, and everything should succeed as
+    expected
+* `vagrant provision pe-mom --provision-with hosts`
+  * Because the external postgres node came up AFTER the MOM, the MOM doesn't
+    have a host entry for it. This command ensures the MOM can contact the
+    external postgres node
+* `vagrant ssh pe-mom -c "sudo su - -c 'puppet enterprise configure; puppet
+  agent -t;'"`
+  * This step completes the setup of the MOM and runs Puppet to ensure
+    everything is completely setup
+* `vagrant provision pe-mom`
+  * This step runs through all the provisioners, but specifically we're looking
+    for the provisioner that configures the necessary Console node groups that
+    are necessary for the external postgres node and the compilation master (it
+    never ran because it's ordered AFTER the PE installation provisioner, and
+    that provisioner failed during the first run)
+* `vagrant ssh external-postgres -c "sudo su - -c 'puppet agent -t;'"`
+  * The previous step setup the classification necessary for the external
+    postgres node, and now a puppet run will complete the configuration
+    (specifically setting up rules in pg_ident.conf for both the MOM and
+    compile master)
+* `vagrant up compile-master-puppetdb`
+  * Bring up the compilation master
+  * NOTE: The puppet run AFTER this step takes a couple of minutes. We need to
+    wait for the node to export all the whitelist resources necessary so that
+    the MOM will trust the node as a compilation master and a PuppetDB node
+* `vagrant ssh pe-mom -c "sudo su - -c 'puppet agent -t;'"`
+  * This run allows the MOM to pick up the exported resources from the
+    compilation master and ensures that the compilation master is on the
+    whitelist for the Console and PuppetDB
+
+At this point the entire stack should be up and functional.  You can test the
+stack in the following section.
+
+
+## Testing the stack
+
+A full and complete test of all components would be to do a puppet agent run
+with a new certname so Puppet would see the new certname as a new 'node.' Do
+that with the following command:
 
 ```
 vagrant ssh compile-master-puppetdb -c "sudo /opt/puppetlabs/bin/puppet agent -t --server compile-master-puppetdb --certname test"
 
 ```
 
-The setup is handled by the vagrant stack but here are the details
+After that completes, sign the cert on the MOM with the following command:
 
-1.  Add `puppet_enterprise::profile::puppetdb' to your compile master
-2.  Configure puppetdb.conf on the compile master to connect to the local puppetdb
-  - This causes the compile masters to connect to the puppetdb_host that is local to it I suppose it also makes the MoM connect to it's puppetdb but it was already doing that.  
-  - You could provide a comma delimited list of $clientcert and the fqdn of your MoM if you wanted the master to fail over to the MoM when it can't connect to the local puppetdb
-    - I recommend that if the local puppetdb on the compile master stops working that you instead remove the compile master from your load balancer instead of failing over just puppetdb traffic.  
+```
+vagrant ssh pe-mom -c "sudo /opt/puppetlabs/bin/puppet cert sign --all"
 
-The setup used by the stack is somewhat fragile and likely to break in future versions of PE.  However, the basic idea that you can run puppetdb on a compile master is proved and it's not complicated.
+```
+
+Finally, run puppet again. If the run completes successfully, then all
+components are up and functioning properly:
+
+```
+vagrant ssh compile-master-puppetdb -c "sudo /opt/puppetlabs/bin/puppet agent -t --server compile-master-puppetdb --certname test"
+
+```
+
+## PuppetDB Status
+
+PuppetDB has a status endpoint that will provide you with the current state of
+PuppetDB (including whether the database backend is up). Execute the following
+curl directly from a machine that has PuppetDB installed to see the output.
+Here's what the status endpoint returns if the external postgres database is
+down (i.e. right after you bring up pe-mom for the first time):
+
+```
+[vagrant@pe-mom ~]$ curl -k -X GET -H "Accept: application/json" http://localhost:8080/status/v1/services/puppetdb-status | python -m json.tool
+
+{
+    "detail_level": "info",
+    "service_name": "puppetdb-status",
+    "service_status_version": 1,
+    "service_version": "4.1.4",
+    "state": "starting",
+    "status": {
+        "maintenance_mode?": true,
+        "queue_depth": null,
+        "rbac_status": "error",
+        "read_db_up?": false,
+        "write_db_up?": false
+    }
+}
+```
+
+
+## Inspecting the PostgreSQL databases directly
+
+To see the status of the PostgreSQL database directly from the `psql` binary,
+you can execute the following three commands (as displayed below):
+
+1. `su - pe-postgres -s /bin/bash -c /opt/puppetlabs/server/bin/psql`
+2. `\c pe-puppetdb`
+3. `SELECT * from certnames;`
+
+```
+[root@external-postgres vagrant]# su - pe-postgres -s /bin/bash -c /opt/puppetlabs/server/bin/psql
+psql (9.4.7)
+Type "help" for help.
+
+pe-postgres=# \c pe-puppetdb
+You are now connected to database "pe-puppetdb" as user "pe-postgres".
+pe-puppetdb=# SELECT * from certnames;
+ id |        certname         | latest_report_id | deactivated | expired
+----+-------------------------+------------------+-------------+---------
+  2 | external-postgres       |                5 |             |
+  3 | compile-master-puppetdb |                8 |             |
+  1 | pe-mom                  |               10 |             |
+(3 rows)
+
+```
+
+You can see from the output that we have three entries in that database, and
+that data is getting populated from PuppetDB.
+
+
+## Necessary steps to get this working OUTSIDE of Vagrant
+
+Obviously this stack is meant to be spun up by Vagrant, but if you need to set
+this up on existing infrastructure, below is some of the "magic" that was done in the
+background by the various provisioners.
+
+**NOTE: This was tested on Puppet Enterprise 2016.2.0 and I expect will
+continue to work during the 2016.2.x series. Because this work is dependent on
+the state of the `puppet_enterprise` module, I would expect the class
+parameters and Hiera data to be different across major releases. You've been
+warned!**
+
+### Console node groups for classification
+
+Due to the way the `puppet_enterprise` module works in 2016.2.x, there is some
+data that needs to be set within the Puppet Enterprise Console as well as
+within `pe.conf` initially and Hiera. The puppet code within
+`puppet_code/create_compile_master_pdb_node_group.pp` in this repo models the
+node groups that need be created inside the console (including all class
+parameters). Broken down, however, there are the node groups that need to be
+created or modified:
+
+* PE Compile Master with PuppetDB
+  * This group is created SPECIFICALLY for new/additional compilation masters
+    that will also contain PuppetDB instances (and specifically NOT the MOM)
+  * The following three profiles are added without modification
+    * `puppet_enterprise::profile::master::mcollective`
+    * `puppet_enterprise::profile::mcollective::peadmin`
+    * `puppet_enterprise::profile::puppetdb`
+  * The `puppet_enterprise::profile::master` class is added, however
+    `puppetdb_host` and `puppetdb_port` are specified because these two
+    parameters are what control the order in which puppet attempts to send data
+    to PuppetDB
+    * Right now it's just `${fqdn}` so every compilation master uses ITSELF as
+      the only PuppetDB host, but you can optionally specify an array with both the
+      compilation master (first) and the MOM so that puppet will failover to
+      the MOM if the compilation master PuppetDB instance is down
+    * This COULD cause issues if a large number of CMs fail and puppet starts
+      failing over PuppetDB requests to the MOM node all at once, so that's
+      something to monitor
+* PE Master Override
+  * TODO: I have no idea why this override exists - I see it as doing nothing
+* PE External Postgres
+  * This group is created for the external postgres node and for the purpose of
+    continuous management/enforcement
+  * The only class necessary is `puppet_enterprise::profile::database` (without
+    modification)
+* PE Infrastructure
+  * This group already exists in the console and contains the declaration of
+    the `puppet_enterprise` class with key parameters that most of the other
+    node groups rely upon
+  * Because parameters are specified explicitly in this group, Hiera cannot be
+    used for any of these parameters (i.e. it's a resource-style declaration of
+    the class, and thus these values trump everything else)
+  * The only parameter that need be modified in this node group is
+    `puppetdb_host`
+    * Currently (as of 2016.2.x), the value of `puppetdb_host` is set by
+      the `pe_install::puppetdb_certname` parameter, which is currently
+      restricted to be a single string value
+    * Problems arise because the value of `$puppet_enterprise::puppetdb_host`
+      is used to create rules in `pg_ident.conf` on the external postgres node
+      for the purpose of allowing PuppetDB instances to write to the
+      `pe-puppetdb` database
+    * The value of `$puppet_enterprise::puppetdb_host` needs to include ALL
+      nodes that contain a PuppetDB instance, and so this value needs to be
+      modified to explicitly list all PuppetDB nodes (i.e. `['pe-mom', 'compile-master-puppetdb']`)
+
+### What about Hiera?
+
+I've left all the Hiera entries commented out in `config/hierafiles/defaults.yaml`
+for posterity, but the crux of the matter is that most of the data needed for this
+stack relies on parameters in the PE Infrastructure's declaration of
+`puppet_enterprise`. The way the `puppet_enterprise` module is laid out in 2016.2.x,
+there are certain parameters that are explicitly set by that group and thus
+Hiera wouldn't be effective. I expect this to change in the next major PE
+release (and beyond), but this is the way it is right now
 
 
 # Puppet Debugging Kit
