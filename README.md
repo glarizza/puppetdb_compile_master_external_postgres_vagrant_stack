@@ -33,7 +33,7 @@ This Vagrant stack will stand up three machines with the following roles:
 
 * `vagrant up pe-mom`
   * This will bring up the Master of Masters (MOM) **BUT INSTALLATION WILL
-  FAIL** this is expected because the external postgres database isn't up yet.
+  FAIL**. This is expected because the external postgres database isn't up yet.
   When the MOM fails, though, it still has Puppetserver running with the CA
   role, which is what we need to get the external postgres node registered with
   Puppet and configured
@@ -50,7 +50,7 @@ This Vagrant stack will stand up three machines with the following roles:
     everything is completely setup
 * `vagrant provision pe-mom`
   * This step runs through all the provisioners, but specifically we're looking
-    for the provisioner that configures the necessary Console node groups that
+    for the provisioner that configures the Console node groups that
     are necessary for the external postgres node and the compilation master (it
     never ran because it's ordered AFTER the PE installation provisioner, and
     that provisioner failed during the first run)
@@ -173,7 +173,7 @@ warned!**
 
 Due to the way the `puppet_enterprise` module works in 2016.2.x, there is some
 data that needs to be set within the Puppet Enterprise Console as well as
-within `pe.conf` initially and Hiera. The puppet code within
+within `pe.conf` initially. The puppet code within
 `puppet_code/create_compile_master_pdb_node_group.pp` in this repo models the
 node groups that need be created inside the console (including all class
 parameters). Broken down, however, there are the node groups that need to be
@@ -197,8 +197,6 @@ created or modified:
     * This COULD cause issues if a large number of CMs fail and puppet starts
       failing over PuppetDB requests to the MOM node all at once, so that's
       something to monitor
-* PE Master Override
-  * TODO: I have no idea why this override exists - I see it as doing nothing
 * PE External Postgres
   * This group is created for the external postgres node and for the purpose of
     continuous management/enforcement
